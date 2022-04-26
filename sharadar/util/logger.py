@@ -32,7 +32,7 @@ class SharadarDbBundleLogger(Logger):
 
     def process_record(self, record):
         super().process_record(record)
-        if os.name == 'posix':
+        if sys.platform == 'linux':
             msg = record.message.encode("unicode_escape").decode("utf-8")
             msg = msg.replace('\n', ' ')
             msg = msg.replace('"', "'")
