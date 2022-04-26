@@ -107,7 +107,7 @@ class SQLiteAssetFinder(AssetFinder):
 
         cmd = sql % (', '.join(map(str, sids)), as_of_date.value, n)
         result =  self.engine.execute(cmd).fetchall()
-        return pd.DataFrame(result).set_index(0).reindex(sids).T.values.astype('float64')
+        return pd.DataFrame(result).set_index('sid').reindex(sids).T.values.astype('float64')
 
     @cached
     def get_fundamentals(self, sids, field_name, as_of_date=None, n=1):
@@ -122,7 +122,7 @@ class SQLiteAssetFinder(AssetFinder):
             )
             return []
         #shape: (windows lenghts=1, num of assets)
-        return pd.DataFrame(result).set_index(0).reindex(sids).T.values.astype('float64')
+        return pd.DataFrame(result).set_index('sid').reindex(sids).T.values.astype('float64')
     
     @cached
     def get_fundamentals_df_window_length(self, sids, field_name, as_of_date=None, window_length=1):
@@ -162,7 +162,7 @@ class SQLiteAssetFinder(AssetFinder):
         result = self._get_result_ttm(sids, field_name + '_arq', as_of_date, k)
         if len(result) == 0:
             return []
-        return pd.DataFrame(result).set_index(0).reindex(sids).T.values.astype('float64')
+        return pd.DataFrame(result).set_index('sid').reindex(sids).T.values.astype('float64')
     
     @cached
     def get_info(self, sids, field_name, as_of_date=None):
@@ -173,7 +173,7 @@ class SQLiteAssetFinder(AssetFinder):
         result = self._get_result(sids, field_name, as_of_date, n=1, enforce_date=False)
         if len(result) == 0:
             return []
-        return pd.DataFrame(result).set_index(0).reindex(sids, fill_value='NA').T.values
+        return pd.DataFrame(result).set_index('sid').reindex(sids, fill_value='NA').T.values
 
     @cached
     def get_daily_metrics(self, sids, field_name, as_of_date=pd.Timestamp.today(), n=1, calendar = get_calendar('XNYS')):
