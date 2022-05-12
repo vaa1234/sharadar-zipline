@@ -35,7 +35,7 @@ class BundlePipelineEngine(SimplePipelineEngine):
                  default_hooks=None):
         super().__init__(get_loader, asset_finder, default_domain, populate_initial_workspace, default_hooks)
 
-    def run_pipeline(self, pipeline, start_date, end_date=None, chunksize=120, hooks=None):
+    def run_pipeline(self, pipeline, start_date, end_date=None, chunksize=252, hooks=None):
         if end_date is None:
             end_date = start_date
 
