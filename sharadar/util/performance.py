@@ -1,440 +1,443 @@
+import alphalens as al
 import pandas as pd
-import matplotlib.pyplot as plt
+import numpy as np
+import empyrical as em
+from pandas.tseries.offsets import Day, BDay
 import pyfolio as pf
 from pyfolio.tears import utils
 from pyfolio.utils import format_asset
 from pyfolio import round_trips as rt
 from pyfolio.plotting import STAT_FUNCS_PCT
-from collections import OrderedDict
-import numpy as np
-import base64
-import io
-import os
-from sharadar.util.logger import log
 import time
-import gc
-import psutil
-import datetime
-from sharadar.pipeline.engine import symbol, symbols, returns
-import warnings
+from sharadar.pipeline.engine import symbol, returns, prices as get_pricing
+from IPython.display import display, HTML
 
-DATETIME_FMT = '%Y-%m-%d_%H%M'
+import plotly
+import plotly.graph_objects as go
 
+from zipline.api import set_commission, order_target_percent
+from sharadar.util.run_algo import run_algorithm
+from zipline.finance.commission import PerShare
 
-def _to_img(figure):
-    pic_IObytes = io.BytesIO()
-    figure.savefig(pic_IObytes, format='png')
-    pic_IObytes.seek(0)
-    pic_hash = base64.b64encode(pic_IObytes.read())
-    return '<img width="60%" height="60%" src="data:image/png;base64, ' + pic_hash.decode("utf-8") + '" />'
+from sharadar.util.telegram import notify_telegram
 
-
-def analyze(perf, filename, doc=None, duration=None, param=None, info=None, show_image=True, context=None):
-    num_positions = perf.positions.shape[0]
-    if num_positions == 0:
-        raise ValueError("No positions found")
-
-    gc.collect()
-    mem = psutil.virtual_memory()
-    log.info("Memory used %.2f Gb von %.2f Gb (%d%%)" % (mem.used / 1e9, mem.total / 1e9, mem.percent))
-
-    now = datetime.datetime.now()
-
-    if context is not None:
-        if context.recorded_vars is not None:
-            perf._metadata={'recorded_vars': list(context.recorded_vars.keys())}
-
-    serialise(perf, filename, now)
-
-    with warnings.catch_warnings():
-        # ignore the many pyfolio warnings
-        warnings.simplefilter("ignore")
-        create_report(perf, filename, now, doc, duration, param, info, show_image)
-
-
-def serialise(perf, filename, now):
-    suffix = '_' + now.strftime(DATETIME_FMT) + '_perf.dump'
-    perf_dump_file = change_extension(filename, suffix)
-    log.info("Serialise performance date in %s" % perf_dump_file)
-    # joblib.dump(perf, perf_dump_file)
-    perf.to_pickle(perf_dump_file)
-
-
-def create_report(perf, filename, now, doc=None, duration=None, param=None, info=None, show_image=True):
-    if not hasattr(perf, 'returns'):
-        perf['returns'] = perf['pnl'] / (perf['portfolio_value'] - perf['pnl'])
-        perf['returns'] = perf['returns'].replace([np.nan, np.inf, -np.inf], 0.0)
-
-    tot_positions = sum([len(x) for x in perf.positions])
-    if tot_positions == 0:
-        log.warn("No positions available")
-        return
-
-    rets, positions, transactions = pf.utils.extract_rets_pos_txn_from_zipline(perf)
-    date_rows = OrderedDict()
-    if len(rets.index) > 0:
-        date_rows['Start date'] = rets.index[0].strftime('%Y-%m-%d')
-        date_rows['End date'] = rets.index[-1].strftime('%Y-%m-%d')
-        date_rows['Total months'] = int(len(rets) / 21)
+def analyze_zipline(strategy, benchmark=None):
+    
+    strategy_perf = pd.read_pickle(strategy)
+    rets, positions, transactions = pf.utils.extract_rets_pos_txn_from_zipline(strategy_perf)
+    
+    if benchmark is not None:
+        benchmark_perf = pd.read_pickle(benchmark)
+        benchmark_rets, benchmark_positions, benchmark_transactions = pf.utils.extract_rets_pos_txn_from_zipline(benchmark_perf)
+    else:
+        benchmark_rets = None
+    
+    display(HTML('Backtest name: {}'.format(strategy_perf.columns.name)))
+    if benchmark is not None:
+        display(HTML('Benchmark name: {}'.format(benchmark_perf.columns.name)))
+    display(HTML('Start date: {}'.format(rets.index[0].strftime('%Y-%m-%d'))))
+    display(HTML('End date: {}'.format(rets.index[-1].strftime('%Y-%m-%d'))))
+    display(HTML('Total months: {}'.format(int(len(rets) / 21))))
 
     perf_stats_series = pf.timeseries.perf_stats(rets, positions=positions, transactions=transactions)
 
-    benchmark_rets = returns([symbol('SPY')], rets.index[0], rets.index[-1])
-    benchmark_perf_stats = pf.timeseries.perf_stats(benchmark_rets)
-
     perf_stats_df = pd.DataFrame(perf_stats_series, columns=['Backtest'])
-    perf_stats_df['Benchmark'] = benchmark_perf_stats
-    perf_stats_df['Spread'] = perf_stats_df['Backtest'] - perf_stats_df['Benchmark']
-    format_perf_stats(perf_stats_df)
+    perf_stats_df = perf_stats_df.append(pd.DataFrame(index=['Transactions count'], data={'Backtest': len(transactions.index)}))
+    perf_stats_df = perf_stats_df.append(pd.DataFrame(index=['Annual transaction costs'], data={'Backtest': annual_transaction_costs(strategy_perf)}))
+    perf_stats_df = perf_stats_df.append(pd.DataFrame(index=['Total comissions amount'], data={'Backtest': total_comissions_amount(strategy_perf)}))
 
-    drawdown_df = pf.timeseries.gen_drawdown_table(rets, top=5)
-    rets_interesting = pf.timeseries.extract_interesting_date_ranges(rets)
-    positions = utils.check_intraday('infer', rets, positions, transactions)
-    transactions_closed = rt.add_closing_transactions(positions, transactions)
-    trades = rt.extract_round_trips(
-        transactions_closed,
-        portfolio_value=positions.sum(axis="columns") / (1 + rets)
-    )
+    if benchmark is not None:
+        
+        benckmarkperf_stats_series = pf.timeseries.perf_stats(benchmark_rets, positions=benchmark_positions, transactions=benchmark_transactions)
+        perf_stats_df['Benchmark'] = benckmarkperf_stats_series
 
-    if show_image:
-        fig0 = None
-        fig1 = None
-        fig2 = None
-        fig3 = None
-        fig4 = None
-        fig5 = None
-        try:
-            fig0 = create_log_returns_chart(rets, benchmark_rets, perf)
-        except Exception as e:
-            log.warn(e)
+        perf_stats_df.at['Transactions count', 'Benchmark'] = len(benchmark_transactions.index)
+        perf_stats_df.at['Annual transaction costs', 'Benchmark'] = annual_transaction_costs(benchmark_perf)
+        perf_stats_df.at['Total comissions amount', 'Benchmark'] = total_comissions_amount(benchmark_perf)
+        perf_stats_df.at['Correlation', 'Backtest'] = rets.corr(benchmark_rets)
+        
+        perf_stats_df['Spread'] = perf_stats_df['Backtest'] - perf_stats_df['Benchmark']
 
-        try:
-            fig1 = pf.create_returns_tear_sheet(rets, positions, transactions, benchmark_rets=benchmark_rets, return_fig=True)
-        except Exception as e:
-            log.warn(e)
-
-        try:
-            fig2 = pf.create_position_tear_sheet(rets, positions, return_fig=True)
-        except Exception as e:
-            log.warn(e)
-
-        try:
-            fig3 = pf.create_txn_tear_sheet(rets, positions, transactions, return_fig=True)
-        except Exception as e:
-            log.warn(e)
-
-        try:
-            fig4 = pf.create_interesting_times_tear_sheet(rets, return_fig=True)
-        except Exception as e:
-            log.warn(e)
-
-        try:
-            fig5 = pf.create_round_trip_tear_sheet(rets, positions, transactions, return_fig=True)
-        except Exception as e:
-            log.warn(e)
-
-    report_suffix = "_%s_%.2f_report.htm" % (now.strftime(DATETIME_FMT), 100. * perf_stats_series['Annual return'])
-    reportfile = change_extension(filename, report_suffix)
-    with open(reportfile, 'w') as f:
-        print("""<!DOCTYPE html>
-<html>
-   <head>
-      <title>Performance Report</title>
-      <style >
-         body {
-         font-family: Arial, Helvetica, sans-serif;
-         }
-         table {
-         border-collapse: collapse;
-         }
-         tbody tr:nth-child(odd) {
-         background-color: lightgrey;
-         }
-         tbody tr:nth-child(even) {
-         background-color: white;
-         }
-         tr th {
-         border: none;
-         text-align: right;
-         padding: 2px 5px 2px;
-         }
-         tr td {
-         border: none;
-         text-align: right;
-         padding: 2px 5px 2px;
-         }
-      </style>
-      
-      <script type="text/javascript">
-        function showElement() {
-            element = document.getElementById('code'); 
-            element.style.visibility = 'visible'; 
-        } 
-      
-        function hideElement() { 
-            element = document.getElementById('code'); 
-            element.style.visibility = 'hidden'; 
-        } 
-      </script> 
-   </head>
-   <body>""", file=f)
-        print("<h1>Performance report for " + os.path.basename(filename) + "</h1>", file=f)
-        print("<p>Created on %s</p>" % (now), file=f)
-        if duration is not None:
-            print("<p>Backtest executed in %s</p>" % (time.strftime("%H:%M:%S", time.gmtime(duration))), file=f)
-        if doc is not None:
-            print('<h3>Description</h3>', file=f)
-            print('<p style="white-space: pre">%s</p>' % doc.strip(), file=f)
-        if param is not None and len(param) > 0:
-            print('<h3>Parameters</h3>', file=f)
-            print('<pre>%s</pre><br/>' % str(param), file=f)
-        if info is not None and len(info) > 0:
-            print('<h3>Info</h3>', file=f)
-            print('<pre>%s</pre><br/>' % str(info), file=f)
-        print(to_html_table(
-            perf_stats_df,
-            float_format='{0:.2f}'.format,
-            header_rows=date_rows
-        ), file=f)
-        print("<br/>", file=f)
-        if show_image:
-            if fig0 is not None:
-                print("<h3>Log Returns</h3>", file=f)
-                print(_to_img(fig0), file=f)
-                print("<br/>", file=f)
-        print(to_html_table(
-            drawdown_df.sort_values('Net drawdown in %', ascending=False),
-            name='Worst drawdown periods',
-            float_format='{0:.2f}'.format,
-        ), file=f)
-        print("<br/>", file=f)
-        print(to_html_table(pd.DataFrame(rets_interesting)
-                            .describe().transpose()
-                            .loc[:, ['mean', 'min', 'max']] * 100,
-                            name='Stress Events',
-                            float_format='{0:.2f}%'.format), file=f)
-        print("<br/>", file=f)
-        if len(trades) >= 5:
-            stats = rt.gen_round_trip_stats(trades)
-            print(to_html_table(stats['summary'], float_format='{:.2f}'.format, name='Summary stats'), file=f)
-            print("<br/>", file=f)
-            print(to_html_table(stats['pnl'], float_format='${:.2f}'.format, name='PnL stats'), file=f)
-            print("<br/>", file=f)
-            print(to_html_table(stats['duration'], float_format='{:.2f}'.format, name='Duration stats'), file=f)
-            print("<br/>", file=f)
-            print(to_html_table(stats['returns'] * 100, float_format='{:.2f}%'.format, name='Return stats'), file=f)
-            print("<br/>", file=f)
-            stats['symbols'].columns = stats['symbols'].columns.map(format_asset)
-            print(to_html_table(stats['symbols'] * 100, float_format='{:.2f}%'.format, name='Symbol stats'), file=f)
-
-        if show_image:
-            if fig1 is not None:
-                print("<h3>Returns</h3>", file=f)
-                print(_to_img(fig1), file=f)
-
-            if fig2 is not None:
-                print("<h3>Positions</h3>", file=f)
-                print(_to_img(fig2), file=f)
-
-            if fig3 is not None:
-                print("<h3>Transactions</h3>", file=f)
-                print(_to_img(fig3), file=f)
-
-            if fig4 is not None:
-                print("<h3>Interesting Times</h3>", file=f)
-                print(_to_img(fig4), file=f)
-
-            if fig5 is not None:
-                print("<h3>Trades</h3>", file=f)
-                print(_to_img(fig5), file=f)
-
-        print('<br/>', file=f)
-        print('<button onclick="showElement()">Show Code</button> <button onclick="hideElement()">Hide Code</button>', file=f)
-        print('<pre id="code" style="visibility: hidden">', file=f)
-        print(open(filename, "r").read(), file=f)
-        print('</pre>', file=f)
-
-        print("</body>\n</html>", file=f)
-
-
-def format_perf_stats(perf_stats_df):
     for column in perf_stats_df.columns:
         for stat, value in perf_stats_df[column].iteritems():
-            if stat in STAT_FUNCS_PCT:
+            if stat in STAT_FUNCS_PCT + ['Annual transaction costs']:
                 perf_stats_df.loc[stat, column] = str(np.round(value * 100, 2)) + '%'
+                
+    display(HTML(perf_stats_df.to_html()))
+    
+    display(HTML(holding_period_map(rets, benchmark_rets)))
+    
+    if benchmark is not None:
+        corr_chart(rets, benchmark_rets)
 
-def create_log_returns_chart(rets, benchmark_rets, perf):
-    try:
-        return create_log_returns_chart_with_vars(rets, benchmark_rets, perf)
-    except:
-        return create_log_returns_chart_no_vars(rets, benchmark_rets)
+    cumulative_return_chart(rets, benchmark_rets)
+        
+    pf.create_round_trip_tear_sheet(returns=rets, positions=positions, transactions=transactions, return_fig=True)
+    
+    pf.create_returns_tear_sheet(rets, positions, transactions, benchmark_rets=benchmark_rets, return_fig=True)
+    
+    pf.create_position_tear_sheet(rets, positions, return_fig=True)
+    
+    pf.create_txn_tear_sheet(rets, positions, transactions, return_fig=True)
 
+    pf.create_interesting_times_tear_sheet(rets, return_fig=True)
 
-def create_log_returns_chart_no_vars(rets, benchmark_rets):
-    cum_log_returns = np.log1p(rets).cumsum()
-    cum_log_benchmark_rets = np.log1p(benchmark_rets).cumsum()
+def corr_chart(rets, benchmark_rets):
 
-    fig, ax = plt.subplots()
-    cum_log_returns.plot(ax=ax, figsize=(20, 10))
-    cum_log_benchmark_rets.plot(ax=ax)
-    ax.grid(True)
-    ax.axhline(y=0, linestyle='--', color='black')
-    ax.legend(['Backtest', 'Benchmark'])
-    plt.title("Log returns")
-    return fig
+    corr = rets.rolling(30).corr(benchmark_rets)
 
+    fig_corr = go.Figure(layout = go.Layout(yaxis = dict(tickformat=",.2f"),
+                                                       xaxis = dict(tickformat= '%Y-%m-%d'),
+                                                       hovermode="x unified",
+                                                       legend_orientation="h",
+                                                       yaxis_range=(-1, 1),
+                                                       title_text="30 day correlation over time"
+                                                      )
+                                   )
 
-def create_log_returns_chart_with_vars(rets, benchmark_rets, perf):
-    cum_log_returns = np.log1p(rets).cumsum()
-    cum_log_benchmark_rets = np.log1p(benchmark_rets).cumsum()
+    fig_corr.add_trace(
+        go.Scatter(
+            x=rets.index, 
+            y=corr,
+            hoverinfo='x+y',
+            # name='Bonds',
+            mode='lines',
+            line=dict(width=0.5, color='rgb(131, 90, 241)'),
+            # stackgroup='one' # define stack group
+        )
+    )
 
-    recorded_vars = perf._metadata['recorded_vars']
-    n = len(recorded_vars) + 1
-    ratios = [1 for i in range(n)]
-    ratios[0] = 3
-    fig, ax = plt.subplots(n, gridspec_kw={'height_ratios': ratios})
-    cum_log_returns.plot(ax=ax[0], figsize=(20, 20))
-    cum_log_benchmark_rets.plot(ax=ax[0])
-    ax[0].grid(True)
-    ax[0].axhline(y=0, linestyle='--', color='black')
-    ax[0].legend(['Backtest', 'Benchmark'])
-    plt.suptitle("Log returns")
+    return fig_corr.show()
 
-    i = 1
-    for v in recorded_vars:
-        perf[v].plot(ax=ax[i])
-        ax[i].grid(True)
-        ax[i].axhline(y=0, linestyle='--', color='black')
-        ax[i].legend([v])
-        i += 1
+def returns_analyze(strategy_returns, benchmark_returns=None):
+    
+    display(HTML('Backtest name: {}'.format(strategy_returns.name)))
+    display(HTML('Start date: {}'.format(strategy_returns.index[0].strftime('%Y-%m-%d'))))
+    display(HTML('End date: {}'.format(strategy_returns.index[-1].strftime('%Y-%m-%d'))))
+    display(HTML('Total months: {}'.format(int(len(strategy_returns) / 21))))
 
-    return fig
+    strategy_stats = pf.timeseries.perf_stats(strategy_returns)
+    
+    perf_stats_df = pd.DataFrame(strategy_stats, columns=['Backtest'])
+    
+    if benchmark_returns is not None:
+        
+        benchmark_stats = pf.timeseries.perf_stats(benchmark_returns)
+        perf_stats_df['Benchmark'] = benchmark_stats
+        perf_stats_df['Spread'] = perf_stats_df['Backtest'] - perf_stats_df['Benchmark']
+        
+    for column in perf_stats_df.columns:
+        for stat, value in perf_stats_df[column].iteritems():
+            if stat in STAT_FUNCS_PCT + ['Annual transaction costs']:
+                perf_stats_df.loc[stat, column] = str(np.round(value * 100, 2)) + '%'
+                
+    display(HTML(perf_stats_df.to_html()))
+    
+    display(HTML(holding_period_map(strategy_returns, benchmark_returns)))
+    
+    if benchmark_returns is not None:
+        cumulative_return_chart(strategy_returns, benchmark_returns)
+        pf.create_returns_tear_sheet(strategy_returns, benchmark_rets=benchmark_returns, return_fig=True)
+    else:
+        cumulative_return_chart(strategy_returns)
+        pf.create_returns_tear_sheet(strategy_returns, return_fig=True)
 
+def cumulative_return_chart(rets, benchmark_rets=None):
+    
+    rets = (rets + 1).cumprod()
+    # rets = em.cum_returns(rets)
 
+    if benchmark_rets is not None:
+        # benchmark_rets = em.cum_returns(benchmark_rets)
+        benchmark_rets = (benchmark_rets + 1).cumprod()
 
-def create_log_returns_chart_with_vars_old(rets, benchmark_rets, perf):
-    cum_log_returns = np.log1p(rets).cumsum()
-    cum_log_benchmark_rets = np.log1p(benchmark_rets).cumsum()
+    fig = go.Figure(layout = go.Layout(yaxis = dict(tickformat=",.2f"),
+                                        xaxis = dict(tickformat= '%Y-%m-%d',
+                                                    rangeslider_visible=True),
+                                        legend=dict(
+                                            orientation="h",
+                                            yanchor="bottom",
+                                            y=1.02,
+                                            xanchor="right",
+                                            x=1
+                                        ),
+                                         hovermode="x unified",
+                                         yaxis_type="log",
+                                         title_text="Cumulative return (log scale)",
+                                         height=800
+                                        )
+                     )
+                         
+    fig.add_trace(
+        go.Scatter(
+            x = rets.index,
+            y = rets.values,
+            mode="lines",
+            name='Backtest'
+        )
+    )
+    if benchmark_rets is not None:
+        fig.add_trace(
+            go.Scatter(
+                x = benchmark_rets.index,
+                y = benchmark_rets.values,
+                mode="lines",
+                name='Benchmark'
+            )
+        )
 
-    fig, ax = plt.subplots(2, gridspec_kw={'height_ratios': [2, 1]})
-    cum_log_returns.plot(ax=ax[0], figsize=(20, 10))
-    cum_log_benchmark_rets.plot(ax=ax[0])
-    ax[0].grid(True)
-    ax[0].axhline(y=0, linestyle='--', color='black')
-    ax[0].legend(['Backtest', 'Benchmark'])
-    plt.suptitle("Log returns")
+    return fig.show()
 
-    recorded_vars = perf._metadata['recorded_vars']
-    perf[recorded_vars].plot(ax=ax[1])
-    ax[1].grid(True)
-    ax[1].axhline(y=0, linestyle='--', color='black')
-    ax[1].legend(recorded_vars)
+def assetallocation_chart(perf):
 
-    return fig
+    fig_assetallocation = go.Figure(layout = go.Layout(yaxis = dict(tickformat=",.1%"),
+                                                       xaxis = dict(tickformat= '%Y-%m-%d'),
+                                                       hovermode="x unified",
+                                                       legend_orientation="h",
+                                                       yaxis_range=(0, 1),
+                                                       title_text="Asset allocation over time"
+                                                      )
+                                   )
 
-def change_extension(filename, new_ext):
-    path, ext = os.path.splitext(filename)
-    return path + new_ext
+    fig_assetallocation.add_trace(
+        go.Scatter(
+            x=perf.index, 
+            y=perf.bonds_weight,
+            hoverinfo='x+y',
+            name='Bonds',
+            mode='lines',
+            line=dict(width=0.5, color='rgb(131, 90, 241)'),
+            stackgroup='one' # define stack group
+        )
+    )
+    
+    fig_assetallocation.add_trace(
+        go.Scatter(
+            x=perf.index, 
+            y=perf.stocks_weight,
+            hoverinfo='x+y',
+            name='Stocks',
+            mode='lines',
+            line=dict(width=0.5, color='rgb(111, 231, 219)'),
+            stackgroup='one'
+        )
+    )
 
+    return fig_assetallocation.show()
 
-def to_html_table(table,
-                name=None,
-                float_format=None,
-                formatters=None,
-                header_rows=None):
-    """
-    Pretty print a pandas DataFrame.
+def holding_period_map(strategy, benckmark=None):
+    
+    if benckmark is not None:
 
-    Uses HTML output if running inside Jupyter Notebook, otherwise
-    formatted text output.
+        benckmark_yr = em.aggregate_returns(benckmark, 'yearly')
 
-    Parameters
-    ----------
-    table : pandas.Series or pandas.DataFrame
-        Table to pretty-print.
-    name : str, optional
-        Table name to display in upper left corner.
-    float_format : function, optional
-        Formatter to use for displaying table elements, passed as the
-        `float_format` arg to pd.Dataframe.to_html.
-        E.g. `'{0:.2%}'.format` for displaying 100 as '100.00%'.
-    formatters : list or dict, optional
-        Formatters to use by column, passed as the `formatters` arg to
-        pd.Dataframe.to_html.
-    header_rows : dict, optional
-        Extra rows to display at the top of the table.
-    """
+    yr = em.aggregate_returns(strategy, 'yearly')
+    df = pd.DataFrame(columns=range(1,len(yr)+1), index=yr.index)
 
-    if isinstance(table, pd.Series):
-        table = pd.DataFrame(table)
+    yr_start = 0
+    
+    if benckmark is not None:
+        table = "<h3>Annual return holding period map and spread to benchmark</h3>"
+    else:
+        table = "<h3>Annual return holding period map</h3>"
+    table += "<table class='table table-hover table-condensed table-striped'>"
+    table += "<tr><th>Years</th>"
 
-    if name is not None:
-        table.columns.name = name
+    for i in range(len(yr)):
+        table += "<th>{}</th>".format(i+1)
+    table += "</tr>"
 
-    html = table.to_html(float_format=float_format, formatters=formatters)
+    for the_year, value in yr.iteritems(): # Iterates years
+        table += "<tr><th>{}</th>".format(the_year) # New table row
 
-    if header_rows is not None:
-        # Count the number of columns for the text to span
-        n_cols = html.split('<thead>')[1].split('</thead>')[0].count('<th>')
+        for yrs_held in (range(1, len(yr)+1)): # Iterates yrs held 
+            if yrs_held <= len(yr[yr_start:yr_start + yrs_held]):
+                ret = em.annual_return(yr[yr_start:yr_start + yrs_held], 'yearly' )
+                
+                if benckmark is not None:
+                    benckmark_ret = em.annual_return(benckmark_yr[yr_start:yr_start + yrs_held], 'yearly' )
+                    diff_ret = ret - benckmark_ret
+                    table += "<td>{:+.0f}({:+.0f})</td>".format(ret * 100, diff_ret * 100)
+                else:
+                    table += "<td>{:+.0f}</td>".format(ret * 100)
+                    
+        table += "</tr>"    
+        yr_start+=1
+    
+    return table
 
-        # Generate the HTML for the extra rows
-        rows = ''
-        for name, value in header_rows.items():
-            rows += ('\n    <tr style="text-align: right;"><th>%s</th>' +
-                     '<td colspan=%d>%s</td></tr>') % (name, n_cols, value)
+def annual_transaction_costs(perf):
+    
+    perf['commission_amount'] = perf.loc[perf.orders.astype(str) != '[]']['orders'].apply(lambda x: sum([d['commission'] for d in x]))
+    
+    perf['commission_percent'] = perf['commission_amount'] / perf['portfolio_value']
+    
+    perf.commission_percent.fillna(0, inplace=True)
+    
+    annual_transaction_costs = em.annual_return(perf['commission_percent'])
+    total_comissions_amount = perf.commission_amount.sum()
+    
+    return annual_transaction_costs
 
-        # Inject the new HTML
-        html = html.replace('<thead>', '<thead>' + rows)
+def total_comissions_amount(perf):
+    
+    perf['commission_amount'] = perf.loc[perf.orders.astype(str) != '[]']['orders'].apply(lambda x: sum([d['commission'] for d in x]))
+    
+    perf['commission_percent'] = perf['commission_amount'] / perf['portfolio_value']
+    
+    perf.commission_percent.fillna(0, inplace=True)
+    
+    annual_transaction_costs = em.annual_return(perf['commission_percent'])
+    total_comissions_amount = int(perf.commission_amount.sum())
+    
+    return total_comissions_amount
 
-    return html
+def buyhold_return(sym, start_date, end_date):
+        
+    def initialize(context):
+        
+        set_commission(PerShare(cost=0.0035, min_trade_cost=0.35))
+        
+        context.has_ordered = False
+        
+    def handle_data(context, data):
+        
+        if not context.has_ordered:
+            order_target_percent(symbol(sym), 1)
+            context.has_ordered = True
+        # order_target_percent(symbol(sym), 1)
+    
+    result = run_algorithm(
+        handle_data=handle_data,
+        start = start_date,
+        end = end_date,
+        initialize=initialize, # Define startup function
+        capital_base=100000, # Set initial capital
+        data_frequency = 'daily', # Set data frequency
+        benchmark_symbol = None
+    )
+    
+    returns, pos, trans = pf.utils.extract_rets_pos_txn_from_zipline(result)
+    returns.name = sym
 
+    return returns
 
-def describe_portfolio(positions):
-    """
-    Describe Portfolio Performance
-    """
-    if len(positions) == 0:
-        return None
+def alphalens_quantile_plot(df, start_date, end_date, period):
+    assets = df.index.levels[1].unique().tolist()
+    df = df.dropna()
+    start_price_date = start_date.strftime('%Y-%m-%d')
+    end_price_date = (end_date + BDay(period)).strftime('%Y-%m-%d')
+    pricing = get_pricing(
+        assets,
+        start_price_date,
+        end_price_date,
+        'close'
+    )
+    
+    factor_names = df.columns
+    factor_data = {}
 
-    pdf = pd.DataFrame(index=list(positions.keys()) + ['Summary'], columns=['cost_basis', 'amount', 'pl', 'pl_pct'])
-    total_cost_basis = 0
-    total_pl = 0
-    for stock, position in list(positions.items()):
-        cost_basis = position.cost_basis
-        if cost_basis == 0:
-            cost_basis = position.last_sale_price
-        if cost_basis == 0:
-            continue
-        pl = (position.last_sale_price - cost_basis) * position.amount
-        pl_pct = 100 * (position.last_sale_price - cost_basis) / cost_basis
-        total_cost_basis = total_cost_basis + (cost_basis * position.amount)
-        total_pl = total_pl + pl
-        pdf.loc[stock].cost_basis = '{:,.2f}'.format(position.amount * cost_basis)
-        pdf.loc[stock].amount = position.amount
-        pdf.loc[stock].pl = '{:,.2f}'.format(pl)
-        pdf.loc[stock].pl_pct = '{:,.2f}'.format(pl_pct)
+    start_time = time.clock()
+    for factor in factor_names:
+        print("Formatting factor data for: " + factor)
+        factor_data[factor] = al.utils.get_clean_factor_and_forward_returns(
+            factor=df[factor],
+            prices=pricing,
+            periods=[period]
+        )
+    end_time = time.clock()
+    print("Time to get arrange factor data: %.2f secs" % (end_time - start_time))
+    
+    qr_factor_returns = []
 
-    if total_cost_basis == 0:
-        return None
+    for i, factor in enumerate(factor_names):
+        mean_ret, _ = al.performance.mean_return_by_quantile(factor_data[factor])
+        mean_ret.columns = [factor]
+        qr_factor_returns.append(mean_ret)
 
-    pdf.loc['Summary'].cost_basis = '{:,.2f}'.format(total_cost_basis)
-    pdf.loc['Summary'].pl = '{:,.2f}'.format(total_pl)
-    pdf.loc['Summary'].pl_pct = '{:,.2f}'.format(100.00 * total_pl / total_cost_basis)
-    return pdf
+    df_qr_factor_returns = pd.concat(qr_factor_returns, axis=1)
 
-def print_portfolio(log, context):
-    if log:
-        mem = psutil.virtual_memory()
-        log.info("Memory used %.2f Gb von %.2f Gb (%d%%)" % (mem.used / 1e9, mem.total / 1e9, mem.percent))
+    return (10000*df_qr_factor_returns).plot.bar(
+        subplots=True,
+        sharey=True,
+        layout=(4,2),
+        figsize=(14, 14),
+        legend=False,
+        title='Alphas Comparison: Basis Points Per Day per Quantile'
+    )
+    
+def alphalens_factor_plot(df, start_date, end_date, period):
+    assets = df.index.levels[1].unique().tolist()
+    df = df.dropna()
+    start_price_date = start_date.strftime('%Y-%m-%d')
+    end_price_date = (end_date + BDay(period)).strftime('%Y-%m-%d')
+    pricing = get_pricing(
+        assets,
+        start_price_date,
+        end_price_date,
+        'close'
+    )
+    
+    factor_names = df.columns
+    factor_data = {}
 
-        pdf = describe_portfolio(context.portfolio.positions)
-        log.info('Portfolio Performance:\n{stats}'.format(stats=pdf))
+    start_time = time.clock()
+    for factor in factor_names:
+        print("Formatting factor data for: " + factor)
+        factor_data[factor] = al.utils.get_clean_factor_and_forward_returns(
+            factor=df[factor],
+            prices=pricing,
+            periods=[period],
+            quantiles=1
+        )
+    end_time = time.clock()
+    print("Time to get arrange factor data: %.2f secs" % (end_time - start_time))
+    
+    ls_factor_returns = []
 
-if __name__ == "__main__":
-    import warnings
-    warnings.filterwarnings('ignore')
-    algo_file = '../../algo/haugen/haugen.py'
-    perf_dump_file = '../../algo/haugen/haugen_2021-10-12_0154_perf.dump'
-    perf = pd.read_pickle(perf_dump_file)
-    now = datetime.datetime.now()
-    create_report(perf, algo_file, now)
+    start_time = time.clock()
+    for i, factor in enumerate(factor_names):
+        ls = al.performance.factor_returns(factor_data[factor])
+        ls.columns = [factor]
+        ls_factor_returns.append(ls)
+    end_time = time.clock()
+    print("Time to generate long/short returns: %.2f secs" % (end_time - start_time))
+
+    df_ls_factor_returns = pd.concat(ls_factor_returns, axis=1)
+    return (1+df_ls_factor_returns).cumprod().plot(title='Cumulative Factor Returns')
+
+def strategy_daily_stats(perf, to_telegram=False):
+
+    output = ("Daily stats of strategy name: {}".format(perf.columns.name))
+    print(output)
+    if to_telegram:
+        notify_telegram(output)
+
+    transactions = pd.DataFrame(data=perf.iloc[0]['transactions'])
+    transactions.set_index('dt', inplace=True)
+    transactions['sid'] = transactions['sid'].apply(lambda x: x.symbol)
+    transactions = transactions[['amount', 'price', 'sid']]
+    transactions = transactions.rename(columns={'sid': 'symbol'})
+    trades = rt.extract_round_trips(transactions)
+
+    output = ('Date: {}'.format(perf.index[0].strftime('%Y-%m-%d')))
+    print(output)
+    if to_telegram:
+        notify_telegram(output)
+
+    output = ('Algo return: {:.2%}'.format(perf.iloc[0]['algorithm_period_return']))
+    print(output)
+    if to_telegram:
+        notify_telegram(output)
+    
+    output = ('Pnl, $: {:,.0f}'.format(perf.iloc[0]['pnl']))
+    print(output)
+    if to_telegram:
+        notify_telegram(output)
+
+    for index, trade in trades.iterrows():
+        
+        output = ('Symbol: {}, side: {}, return: {:.2%} ({:,.0f})'.format(trade.symbol, 'Short' if not trade.long else 'Long', trade.rt_returns, trade.pnl))
+        print(output)
+        if to_telegram:
+            notify_telegram(output)
