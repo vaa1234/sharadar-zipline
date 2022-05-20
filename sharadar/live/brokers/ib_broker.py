@@ -56,6 +56,13 @@ IBPosition = namedtuple('IBPosition', ['contract', 'position', 'market_price',
                                        'unrealized_pnl', 'realized_pnl',
                                        'account_name'])
 
+SHARADAR_TO_IB_EXCHANGES_MAP = {'BATS': 'BATS', 
+                                'NASDAQ': 'NASDAQ', 
+                                'NYSE': 'NYSE',
+                                'NYSEARCA': 'ARCA',
+                                'NYSEMKT': 'AMEX' 
+                                }
+
 _max_wait_subscribe = 10  # how many cycles to wait
 _connection_timeout = 15  # Seconds
 _poll_frequency = 0.1
@@ -205,7 +212,7 @@ class TWSConnection(EWrapper, EClient):
             self.reqRealTimeBars(ticker_id, contract, 60, 'TRADES', True, [])
         else:
             self.reqMktData(ticker_id, contract, "", True, False, [])
-            sleep(11)
+            sleep(0.9) # default 11
 
     def _process_tick(self, ticker_id, tick_type, value):
         try:
@@ -507,7 +514,7 @@ class IBBroker(Broker):
         if asset not in self.subscribed_assets:
             ib_symbol = self._asset_symbol(asset)
             exchange = 'SMART'
-            primaryExchange = 'ISLAND'
+            primaryExchange = SHARADAR_TO_IB_EXCHANGES_MAP[asset.exchange]
             secType = 'STK'
             currency = 'USD'
 
@@ -689,10 +696,11 @@ class IBBroker(Broker):
 
         contract = Contract()
         contract.symbol = ib_symbol
-        contract.exchange = 'SMART'
-        primaryExchange = 'ISLAND'
+        contract.exchange = 'SMART' # style.exchange if style.exchange is not None else 'SMART'
+        log.info(SHARADAR_TO_IB_EXCHANGES_MAP[asset.exchange])
+        contract.primaryExchange = SHARADAR_TO_IB_EXCHANGES_MAP[asset.exchange] # map sharadar asset primary exchange name to IB exchnages name
         contract.secType = 'STK'
-        contract.currency = self.currency
+        contract.currency = 'USD'
 
         order = Order()
         order.totalQuantity = int(fabs(amount))
@@ -704,7 +712,11 @@ class IBBroker(Broker):
 
         if isinstance(style, MarketOrder):
             order.orderType = "MKT"
-            order.tif = "GTC"
+            # order.tif = "GTC"
+            order.tif = "DAY"
+            order.algoStrategy = "Adaptive"
+            order.algoParams = []
+            order.algoParams.append(TagValue("adaptivePriority", "Normal"))
         elif isinstance(style, LimitOrder):
             order.orderType = "LMT"
             order.tif = "GTC"
@@ -718,7 +730,7 @@ class IBBroker(Broker):
             order.orderType = style.get_order_type()
             order.tif = style.get_time_in_force()
 
-
+        log.info(style)
 
 
         order.orderRef = self._create_order_ref(order)
