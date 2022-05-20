@@ -7,12 +7,15 @@ from os import environ as env
 from logbook import Logger, FileHandler, DEBUG, INFO, NOTSET, StreamHandler, set_datetime_format
 from sharadar.util.mail import send_mail
 from zipline.api import get_datetime
+import pandas as pd
+
+def now_time():
+    return pd.to_datetime("today")
 
 # log in local time instead of UTC
 set_datetime_format("local")
 LOG_ENTRY_FMT = '[{record.time:%Y-%m-%d %H:%M:%S}] {record.level_name}: {record.message}'
 LOG_LEVEL_MAP = {'CRITICAL': 2, 'ERROR': 3, 'WARNING': 4, 'NOTICE': 5, 'INFO': 6, 'DEBUG': 7, 'TRACE': 7}
-
 
 class SharadarDbBundleLogger(Logger):
     def __init__(self, logname='sharadar_db_bundle', level=NOTSET):
@@ -32,18 +35,8 @@ class SharadarDbBundleLogger(Logger):
 
     def process_record(self, record):
         super().process_record(record)
-        if sys.platform == 'linux':
-            msg = record.message.encode("unicode_escape").decode("utf-8")
-            msg = msg.replace('\n', ' ')
-            msg = msg.replace('"', "'")
-            cmd = 'echo "%s" | systemd-cat -t sharadar_db_bundle -p %d' % (msg, LOG_LEVEL_MAP[record.level_name])
-            subprocess.run(cmd, shell=True)
 
-
-log = SharadarDbBundleLogger()
-
-
-class BacktestLogger(Logger):
+class StrategyLogger(Logger):
     def __init__(self, filename, arena='backtest', logname='Backtest', level=NOTSET, record_time=get_datetime):
         super().__init__(logname, level)
 
@@ -59,27 +52,26 @@ class BacktestLogger(Logger):
         self.handlers.append(stream_handler)
 
         self.arena = arena
-        self.record_time = record_time
+
+        if self.arena == "backtest":
+            self.record_time = get_datetime
+        else:
+            self.record_time = now_time
 
     def process_record(self, record):
         """
         use the date of the trading day for log purposes
         """
         super().process_record(record)
-        if self.arena == 'live' and record.level >= INFO:
-            send_mail(record.channel + " " + record.level_name, record.message)
         record.time = self.record_time()
 
+log = SharadarDbBundleLogger()
 
 if __name__ == '__main__':
-    log = SharadarDbBundleLogger()
+    log = StrategyLogger()
     log.info("Hello World!")
     log.error("ciao")
     log.warning("ciao\nbello")
 
-
-    import pandas as pd
-    def log_time():
-        return pd.to_datetime("today")
-    BacktestLogger(__file__, arena='live', logname="Myname", record_time=log_time).warn("Hello World!")
+    StrategyLogger(__file__, arena='live', logname="Myname", record_time=now_time).warn("Hello World!")
 
