@@ -114,7 +114,7 @@ class IsDomesticCommonStock(CustomClassifier, BundleLoader):
     def compute(self, today, assets, out, *arrays):
         category = self.asset_finder().get_info(assets, 'category', today)
         out[:] = np.isin(category, ['Domestic Common Stock', 'Domestic Common Stock Primary Class',
-                                    'Domestic Common Stock Secondary Class', 'Domestic Preferred Stock'])
+                                    'Domestic Common Stock Secondary Class'])
 
 
 class IsBankruptcy(CustomClassifier, BundleLoader):
@@ -155,27 +155,24 @@ def get_daily_metrics(asset_finder, assets, field, today, n, mult=1):
         metric = mult * asset_finder.get_daily_metrics(assets, field, today, n + 1)[0, :]
     return metric
 
-class MarketCap(CustomFactor, BundleLoader):
-    inputs = []
+class MarketCap(CustomFactor):
+    inputs = [USEquityPricing.close, Fundamentals(field='sharesbas_arq'), Fundamentals(field='sharefactor_arq')]
     window_length = 1
     window_safe = True
 
-    def compute(self, today, assets, out):
-        out[:] = get_daily_metrics(self.asset_finder(), assets, 'marketcap', today, self.window_length, 1e6)
+    def compute(self, today, assets, out, close, sharesbas, sharefactor):
+        out[:] = close * sharefactor * sharesbas
 
-    def __str__(self):
-        return "MarketCap(%d)" % self.window_length
-
-class EV(CustomFactor, BundleLoader):
-    inputs = []
+class EV(CustomFactor):
+    """
+    Enterprise value is a measure of the value of a business as a whole; calculated as [MarketCap] plus [DebtUSD] minus [CashnEqUSD].
+    """
+    inputs = [MarketCap(), Fundamentals(field='debtusd_arq'), Fundamentals(field='cashnequsd_arq')]
     window_length = 1
     window_safe = True
 
-    def compute(self, today, assets, out):
-        out[:] = out[:] = get_daily_metrics(self.asset_finder(), assets, 'ev', today, self.window_length, 1e6)
-
-    def __str__(self):
-        return "EV(%d)" % self.window_length
+    def compute(self, today, assets, out, mkt_cap, debtusd, cashnequsd):
+        out[:] = mkt_cap + debtusd - cashnequsd
 
 class EvEbit(CustomFactor, BundleLoader):
     inputs = []
