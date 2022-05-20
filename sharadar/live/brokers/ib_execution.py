@@ -1,6 +1,5 @@
 from zipline.finance.execution import ExecutionStyle
 
-
 class TWSOrder(ExecutionStyle):
     def __init__(self, order_type, time_in_force="GTC", exchange=None):
         self._exchange = exchange
@@ -19,7 +18,6 @@ class TWSOrder(ExecutionStyle):
     def get_stop_price(self, _is_buy):
         return None
 
-
 class MarketToLimitOrder(TWSOrder):
     """
     A Market-to-Limit (MTL) order is submitted as a market order to execute at the current best market price.
@@ -30,8 +28,7 @@ class MarketToLimitOrder(TWSOrder):
     def __init__(self, time_in_force="GTC", exchange=None):
         super().__init__("MTL", time_in_force, exchange)
 
-
-class MarketToLimitOrder(TWSOrder):
+class MidPriceOrder(TWSOrder):
     """
     A Midprice order is designed to split the difference between the bid and ask prices, and fill at the current
     midpoint of the NBBO or better. Set an optional price cap to define the highest price (for a buy order) or the
