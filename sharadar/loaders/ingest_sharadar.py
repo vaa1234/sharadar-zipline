@@ -242,16 +242,16 @@ def _ingest(start_session, calendar=get_calendar('XNYS'), output_dir=get_output_
     with closing(sqlite3.connect(asset_dbpath)) as conn, conn, closing(conn.cursor()) as cursor:
         insert_fundamentals(sharadar_metadata_df, sf1_df, cursor, show_progress=True)
 
-    start_date_metrics = asset_db_reader.last_available_daily_metrics_dt
-    log.info("Start creating daily metrics dataframe...")
-    if must_fetch_entire_table(start_date_metrics):
-        log.info("Fetch entire table.")
-        daily_df = fetch_entire_table(env["NASDAQ_API_KEY"], "SHARADAR/DAILY", parse_dates=['date'])
-    else:
-        log.info("Start date: %s" % start_date_fundamentals)
-        daily_df = fetch_table_by_date(env["NASDAQ_API_KEY"], 'SHARADAR/DAILY', start_date_metrics)
-    with closing(sqlite3.connect(asset_dbpath)) as conn, conn, closing(conn.cursor()) as cursor:
-        insert_daily_metrics(sharadar_metadata_df, daily_df, cursor, show_progress=True)
+    # start_date_metrics = asset_db_reader.last_available_daily_metrics_dt
+    # log.info("Start creating daily metrics dataframe...")
+    # if must_fetch_entire_table(start_date_metrics):
+    #     log.info("Fetch entire table.")
+    #     daily_df = fetch_entire_table(env["NASDAQ_API_KEY"], "SHARADAR/DAILY", parse_dates=['date'])
+    # else:
+    #     log.info("Start date: %s" % start_date_fundamentals)
+    #     daily_df = fetch_table_by_date(env["NASDAQ_API_KEY"], 'SHARADAR/DAILY', start_date_metrics)
+    # with closing(sqlite3.connect(asset_dbpath)) as conn, conn, closing(conn.cursor()) as cursor:
+    #     insert_daily_metrics(sharadar_metadata_df, daily_df, cursor, show_progress=True)
 
     if universe:
         from sharadar.pipeline.universes import update_universe, TRADABLE_STOCKS_US, base_universe, context
