@@ -12,6 +12,8 @@
 # limitations under the License.
 import os.path
 from datetime import datetime, timedelta
+
+from pkg_resources import parse_version
 from sharadar.util.logger import log
 import pandas as pd
 import pytz
@@ -27,6 +29,7 @@ from zipline.utils.api_support import ZiplineAPI, api_method, require_initialize
 from zipline.utils.pandas_utils import normalize_date
 from sharadar.util.serialization_utils import load_context, store_context
 from zipline.finance.metrics import MetricsTracker
+from sharadar.live.engine_live import make_pipeline_live_engine
 
 # how many minutes before Trading starts needs the function before_trading_starts
 # be launched
@@ -300,10 +303,5 @@ class LiveTradingAlgorithm(TradingAlgorithm):
 
     def run_pipeline(self, pipeline, start_session, chunksize):
         # In Live mode a Pipeline can be run only for the current session (end_session = start_session)
-        return self.engine.run_pipeline(pipeline, start_session, start_session), start_session
-
-
-
-
-
-
+        pipeline_live_engine = make_pipeline_live_engine()
+        return pipeline_live_engine.run_pipeline(pipeline, start_session, start_session), start_session
