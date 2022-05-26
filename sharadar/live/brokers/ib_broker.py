@@ -697,7 +697,6 @@ class IBBroker(Broker):
         contract = Contract()
         contract.symbol = ib_symbol
         contract.exchange = 'SMART' # style.exchange if style.exchange is not None else 'SMART'
-        log.info(SHARADAR_TO_IB_EXCHANGES_MAP[asset.exchange])
         contract.primaryExchange = SHARADAR_TO_IB_EXCHANGES_MAP[asset.exchange] # map sharadar asset primary exchange name to IB exchnages name
         contract.secType = 'STK'
         contract.currency = 'USD'
@@ -729,9 +728,6 @@ class IBBroker(Broker):
         elif isinstance(style, TWSOrder):
             order.orderType = style.get_order_type()
             order.tif = style.get_time_in_force()
-
-        log.info(style)
-
 
         order.orderRef = self._create_order_ref(order)
 
