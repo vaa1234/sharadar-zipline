@@ -24,6 +24,7 @@ from sharadar.loaders.constant import EXCHANGE_DF, OLDEST_DATE_SEP, METADATA_HEA
 from sharadar.util.nasdaqdatalink_util import last_available_date
 from sharadar.loaders.ingest_macro import create_macro_equities_df, create_macro_prices_df
 import traceback
+from sharadar.util.telegram import notify_telegram
 
 nasdaqdatalink.ApiConfig.api_key = env["NASDAQ_API_KEY"]
 
@@ -265,6 +266,7 @@ def _ingest(start_session, calendar=get_calendar('XNYS'), output_dir=get_output_
     okay_path = os.path.join(output_dir, "ok")
     Path(okay_path).touch()
     log.info("Ingest finished!")
+    notify_telegram('zipline: sharadar ingest finished')
 
 
 def create_metadata():
