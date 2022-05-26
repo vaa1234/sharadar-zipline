@@ -71,6 +71,8 @@ class LiveTradingAlgorithm(TradingAlgorithm):
         blotter_live = BlotterLive(broker=self.broker)
         kwargs['blotter'] = blotter_live
 
+        self.engine = make_pipeline_live_engine()
+
         super(self.__class__, self).__init__(*args, **kwargs)
 
     @api_method
@@ -303,5 +305,4 @@ class LiveTradingAlgorithm(TradingAlgorithm):
 
     def run_pipeline(self, pipeline, start_session, chunksize):
         # In Live mode a Pipeline can be run only for the current session (end_session = start_session)
-        pipeline_live_engine = make_pipeline_live_engine()
-        return pipeline_live_engine.run_pipeline(pipeline, start_session, start_session), start_session
+        return self.engine.run_pipeline(pipeline, start_session, start_session), start_session
