@@ -9,17 +9,20 @@ from pyfolio.utils import format_asset
 from pyfolio import round_trips as rt
 from pyfolio.plotting import STAT_FUNCS_PCT
 import time
-from sharadar.pipeline.engine import symbol, returns, prices as get_pricing
+# backward compatible with quantrocket zipline
+try:
+    from sharadar.pipeline.engine import symbol, returns, prices as get_pricing
+    from sharadar.util.run_algo import run_algorithm
+    from sharadar.util.telegram import notify_telegram
+except:
+    pass
 from IPython.display import display, HTML
 
 import plotly
 import plotly.graph_objects as go
 
 from zipline.api import set_commission, order_target_percent
-from sharadar.util.run_algo import run_algorithm
 from zipline.finance.commission import PerShare
-
-from sharadar.util.telegram import notify_telegram
 
 def analyze_zipline(strategy, benchmark=None):
     
