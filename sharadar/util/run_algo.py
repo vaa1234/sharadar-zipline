@@ -8,7 +8,9 @@ import pandas as pd
 import warnings
 from functools import partial
 from sharadar.pipeline.engine import *
-from sharadar.util.logger import log
+from pathlib import Path
+from sharadar.util.logger import SharadarLogger
+log = SharadarLogger(Path(__file__).stem)
 
 try:
     from pygments import highlight

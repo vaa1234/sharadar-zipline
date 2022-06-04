@@ -14,7 +14,9 @@ import os.path
 from datetime import datetime, timedelta
 
 from pkg_resources import parse_version
-from sharadar.util.logger import log
+from pathlib import Path
+from sharadar.util.logger import SharadarLogger
+log = SharadarLogger(Path(__file__).stem)
 import pandas as pd
 import pytz
 from dateutil.relativedelta import relativedelta

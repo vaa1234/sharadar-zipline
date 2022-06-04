@@ -8,7 +8,9 @@ from click import progressbar
 from sharadar.data.sql_lite_daily_pricing import SQLiteDailyBarReader
 from sharadar.pipeline.engine import make_pipeline_engine
 from sharadar.pipeline.factors import Exchange, Sector, IsDomesticCommonStock, MarketCap, Fundamentals, EV
-from sharadar.util.logger import log
+from pathlib import Path
+from sharadar.util.logger import SharadarLogger
+log = SharadarLogger(Path(__file__).stem)
 from sharadar.util.output_dir import get_output_dir
 from zipline.pipeline import Pipeline, CustomFilter
 from singleton_decorator import singleton

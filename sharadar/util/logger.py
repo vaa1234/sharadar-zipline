@@ -14,20 +14,26 @@ def now_time():
 
 # log in local time instead of UTC
 set_datetime_format("local")
-LOG_ENTRY_FMT = '[{record.time:%Y-%m-%d %H:%M:%S}] {record.level_name}: {record.message}'
+LOG_ENTRY_FMT = '[{record.time:%Y-%m-%d %H:%M:%S}] {record.channel} {record.level_name}: {record.message}'
 LOG_LEVEL_MAP = {'CRITICAL': 2, 'ERROR': 3, 'WARNING': 4, 'NOTICE': 5, 'INFO': 6, 'DEBUG': 7, 'TRACE': 7}
 
-class SharadarDbBundleLogger(Logger):
-    def __init__(self, logname='sharadar_db_bundle', level=NOTSET):
+class SharadarLogger(Logger):
+    def __init__(self, logname='sharadar', level=NOTSET):
         super().__init__(logname, level)
 
         now = datetime.datetime.now()
-        self.filename = os.path.join(env["HOME"], "log",
-                                   "sharadar-zipline" + '_' + now.strftime('%Y-%m-%d_%H%M') + ".log")
 
-        log_file_handler = FileHandler(self.filename, level=DEBUG, bubble=True)
-        log_file_handler.format_string = LOG_ENTRY_FMT
-        self.handlers.append(log_file_handler)
+        filename_detail = os.path.join(env["HOME"], "log",
+                                   "sharadar-zipline" + '_detail_' + now.strftime('%Y-%m-%d') + ".log")
+        logfile_detail_handler = FileHandler(filename_detail, level=DEBUG, bubble=True)
+        logfile_detail_handler.format_string = LOG_ENTRY_FMT
+        self.handlers.append(logfile_detail_handler)
+
+        filename = os.path.join(env["HOME"], "log",
+                                   "sharadar-zipline" + '_' + now.strftime('%Y-%m-%d') + ".log")
+        logfile_handler = FileHandler(filename, level=INFO, bubble=True)
+        logfile_handler.format_string = LOG_ENTRY_FMT
+        self.handlers.append(logfile_handler)
 
         log_std_handler = StreamHandler(sys.stdout, level=INFO)
         log_std_handler.format_string = LOG_ENTRY_FMT
@@ -65,13 +71,14 @@ class StrategyLogger(Logger):
         super().process_record(record)
         record.time = self.record_time()
 
-log = SharadarDbBundleLogger()
+log = SharadarLogger()
 
 if __name__ == '__main__':
-    log = StrategyLogger()
+    log = SharadarLogger('test')
     log.info("Hello World!")
     log.error("ciao")
     log.warning("ciao\nbello")
+    log.debug('somedebug')
 
-    StrategyLogger(__file__, arena='live', logname="Myname", record_time=now_time).warn("Hello World!")
+    # StrategyLogger(__file__, arena='live', logname="Myname", record_time=now_time).warn("Hello World!")
 

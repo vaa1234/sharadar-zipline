@@ -10,7 +10,9 @@ from zipline.pipeline.factors import CustomFactor, DailyReturns
 from zipline.utils.numpy_utils import object_dtype
 from zipline.pipeline.factors import AverageDollarVolume
 from sharadar.pipeline.engine import history, returns
-from sharadar.util.logger import log
+from pathlib import Path
+from sharadar.util.logger import SharadarLogger
+log = SharadarLogger(Path(__file__).stem)
 
 def nanmean(a, axis=0):
     with warnings.catch_warnings():

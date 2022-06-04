@@ -46,7 +46,9 @@ from ibapi.contract import Contract
 from ibapi.order import Order
 from ibapi.execution import ExecutionFilter
 
-from sharadar.util.logger import log
+from pathlib import Path
+from sharadar.util.logger import SharadarLogger
+log = SharadarLogger(Path(__file__).stem)
 
 if sys.version_info > (3,):
     long = int

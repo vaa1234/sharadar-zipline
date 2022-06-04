@@ -33,7 +33,9 @@ from zipline.finance.commission import (
 )
 from zipline.utils.input_validation import expect_types
 import pandas as pd
-from sharadar.util.logger import log
+from pathlib import Path
+from sharadar.util.logger import SharadarLogger
+log = SharadarLogger(Path(__file__).stem)
 
 class BlotterLive(Blotter):
     def __init__(self, broker):

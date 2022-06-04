@@ -12,7 +12,9 @@ from sharadar.pipeline.engine import load_sharadar_bundle, CliProgressPublisher
 from zipline.pipeline.loaders.equity_pricing_loader import USEquityPricingLoader
 from zipline.pipeline.data import USEquityPricing
 from zipline.pipeline.domain import US_EQUITIES
-from sharadar.util.logger import log
+from pathlib import Path
+from sharadar.util.logger import SharadarLogger
+log = SharadarLogger(Path(__file__).stem)
 from zipline.pipeline.loaders.equity_pricing_loader import shift_dates
 from zipline.lib.adjusted_array import AdjustedArray
 from zipline.utils.numpy_utils import repeat_first_axis

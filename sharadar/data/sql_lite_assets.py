@@ -16,7 +16,9 @@ from exchange_calendars import get_calendar
 from zipline.utils.memoize import lazyval
 from pandas.tseries.offsets import DateOffset
 from datetime import timedelta
-from sharadar.util.logger import log
+from pathlib import Path
+from sharadar.util.logger import SharadarLogger
+log = SharadarLogger(Path(__file__).stem)
 
 @singleton
 class SQLiteAssetFinder(AssetFinder):

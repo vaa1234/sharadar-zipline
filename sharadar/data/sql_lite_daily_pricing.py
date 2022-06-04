@@ -5,7 +5,9 @@ import click
 from contextlib import closing
 from exchange_calendars import get_calendar
 from zipline.data.session_bars import SessionBarReader
-from sharadar.util.logger import log
+from pathlib import Path
+from sharadar.util.logger import SharadarLogger
+log = SharadarLogger(Path(__file__).stem)
 from zipline.data.adjustments import SQLiteAdjustmentWriter, SQLiteAdjustmentReader
 from six import (
     iteritems,

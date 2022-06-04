@@ -1,12 +1,13 @@
 from io import BytesIO
 from zipfile import ZipFile
-
+from pathlib import Path
 import numpy as np
 import pandas as pd
 import nasdaqdatalink
 import requests
 from click import progressbar
-from sharadar.util.logger import log
+from sharadar.util.logger import SharadarLogger
+log = SharadarLogger(Path(__file__).stem)
 from six.moves.urllib.parse import urlencode
 
 ONE_MEGABYTE = 1024 * 1024

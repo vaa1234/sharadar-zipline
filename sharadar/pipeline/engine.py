@@ -9,7 +9,9 @@ from sharadar.pipeline.fx import SimpleFXRateReader
 from sharadar.data.sql_lite_assets import SQLiteAssetFinder
 from sharadar.data.sql_lite_daily_pricing import SQLiteDailyBarReader
 from sharadar.util.output_dir import SHARADAR_BUNDLE_NAME, SHARADAR_BUNDLE_DIR
-from sharadar.util.logger import log
+from pathlib import Path
+from sharadar.util.logger import SharadarLogger
+log = SharadarLogger(Path(__file__).stem)
 from six import iteritems
 from toolz import juxt, groupby
 from zipline.data.bundles.core import BundleData, asset_db_path, adjustment_db_path

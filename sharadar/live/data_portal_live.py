@@ -14,7 +14,9 @@ import pandas as pd
 import numpy as np
 from zipline.data.data_portal import DataPortal
 
-from sharadar.util.logger import log
+from pathlib import Path
+from sharadar.util.logger import SharadarLogger
+log = SharadarLogger(Path(__file__).stem)
 
 
 class DataPortalLive(DataPortal):
