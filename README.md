@@ -26,22 +26,17 @@ metrics.register('default_daily', default_daily)
 
 The new entry point is **sharadar-zipline** (it replaces *zipline*).
 
-For example to ingest data use:
-> sharadar-zipline ingest
+To ingest price and fundamental data every day at 9:00 using cron
+> 0 9 * * * sharadar-zipline bundle -i sharadar
 
-To ingest price and fundamental data every day at 21:30 using cron
-> 30 21 * * *	cd $HOME/zipline/lib/python3.6/site-packages/sharadar_db_bundle && $HOME/zipline/bin/python sharadar/__main__.py ingest > $HOME/log/sharadar-zipline-cron.log 2>&1
+To backtest strategy called 'test'
+> sharadar-zipline backtest -n test -s 2020-01-01 -e 2022-03-01 -b sharadar -f daily -c 100000
 
-To run an algorithm
-> sharadar-zipline -f algo.py -s 2017-01-01 -e 2020-01-01
-
-
-To start a notebook 
-> cd notebook
-> jupyter notebook
+To run an algorithm in live trading mode if market open in 30 minutes
+> 5 16 * * mon-fri sharadar-zipline calendar XNYS isopen --after 30m && sharadar-zipline trade -n test --twsuri 127.0.0.1:7496:143
 
 
-Sharadar Fundamentals could be use as follows:
+Example using pipeline with fundamentals factors:
 ```python
 from zipline.pipeline import Pipeline
 import pandas as pd
