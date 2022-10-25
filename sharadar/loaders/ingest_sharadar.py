@@ -184,7 +184,7 @@ def _ingest(start_session, calendar=get_calendar('XNYS'), output_dir=get_output_
     equities_df = create_equities_df(prices_df, tickers, sessions, sharadar_metadata_df, show_progress=True)
 
     # Additional MACRO data
-    macro_equities_df = create_macro_equities_df(calendar)
+    macro_equities_df = create_macro_equities_df()
     equities_df = equities_df.append(macro_equities_df)
 
     # Write equity metadata
