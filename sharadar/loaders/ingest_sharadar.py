@@ -168,104 +168,110 @@ def _ingest(start_session, calendar=get_calendar('XNYS'), output_dir=get_output_
         log.info("Last available date: %s" % start_fetch_date)
 
     log.info("Start loading sharadar metadata...")
-    related_tickers, sharadar_metadata_df = create_metadata()
-    prices_df = get_data(sharadar_metadata_df, related_tickers, start_fetch_date)
-    if len(prices_df) > 0:
-        # the first price date may differ from start_fetch_date because we query quadl by lastupdate
-        log.info("Price data for %d equities from %s to %s." %
-             (len(prices_df.index.get_level_values(1)), prices_df.index[0][0], prices_df.index[-1][0]))
-    else:
-        log.info("No price data retrieved for period from %s." % start_fetch_date)
+
+    try:
+        related_tickers, sharadar_metadata_df = create_metadata()
+        prices_df = get_data(sharadar_metadata_df, related_tickers, start_fetch_date)
+        if len(prices_df) > 0:
+            # the first price date may differ from start_fetch_date because we query quadl by lastupdate
+            log.info("Price data for %d equities from %s to %s." %
+                (len(prices_df.index.get_level_values(1)), prices_df.index[0][0], prices_df.index[-1][0]))
+        else:
+            log.info("No price data retrieved for period from %s." % start_fetch_date)
 
 
-    # iterate over all the securities and pack data and metadata for writing
-    tickers = prices_df['ticker'].unique()
-    log.info("Start creating data for %d equities..." % (len(tickers)))
-    equities_df = create_equities_df(prices_df, tickers, sessions, sharadar_metadata_df, show_progress=True)
+        # iterate over all the securities and pack data and metadata for writing
+        tickers = prices_df['ticker'].unique()
+        log.info("Start creating data for %d equities..." % (len(tickers)))
+        equities_df = create_equities_df(prices_df, tickers, sessions, sharadar_metadata_df, show_progress=True)
 
-    # Additional MACRO data
-    macro_equities_df = create_macro_equities_df()
-    equities_df = equities_df.append(macro_equities_df)
+        # Additional MACRO data
+        macro_equities_df = create_macro_equities_df()
+        equities_df = equities_df.append(macro_equities_df)
 
-    # Write equity metadata
-    log.info("Start writing equities...")
-    asset_dbpath = os.path.join(output_dir, ("assets-%d.sqlite" % ASSET_DB_VERSION))
-    asset_db_writer = SQLiteAssetDBWriter(asset_dbpath)
-    asset_db_writer.write(equities=equities_df, exchanges=EXCHANGE_DF)
+        # Write equity metadata
+        log.info("Start writing equities...")
+        asset_dbpath = os.path.join(output_dir, ("assets-%d.sqlite" % ASSET_DB_VERSION))
+        asset_db_writer = SQLiteAssetDBWriter(asset_dbpath)
+        asset_db_writer.write(equities=equities_df, exchanges=EXCHANGE_DF)
 
-    # Write PRICING data
-    log.info(("Writing pricing data to '%s'..." % (prices_dbpath)))
-    sql_daily_bar_writer = SQLiteDailyBarWriter(prices_dbpath, calendar)
-    prices_df.sort_index(inplace=True)
-    sql_daily_bar_writer.write(prices_df)
+        # Write PRICING data
+        log.info(("Writing pricing data to '%s'..." % (prices_dbpath)))
+        sql_daily_bar_writer = SQLiteDailyBarWriter(prices_dbpath, calendar)
+        prices_df.sort_index(inplace=True)
+        sql_daily_bar_writer.write(prices_df)
 
-    # DIVIDENDS
-    log.info("Creating dividends data...")
-    dividends_df = create_dividends_df(sharadar_metadata_df, related_tickers, tickers, start_fetch_date)
+        # DIVIDENDS
+        log.info("Creating dividends data...")
+        dividends_df = create_dividends_df(sharadar_metadata_df, related_tickers, tickers, start_fetch_date)
 
-    # SPLITS
-    log.info("Creating splits data...")
-    splits_df = create_splits_df(sharadar_metadata_df, related_tickers, tickers, start_fetch_date)
+        # SPLITS
+        log.info("Creating splits data...")
+        splits_df = create_splits_df(sharadar_metadata_df, related_tickers, tickers, start_fetch_date)
 
-    # mergers?
-    # see also https://github.com/quantopian/zipline/blob/master/zipline/data/adjustments.py
+        # mergers?
+        # see also https://github.com/quantopian/zipline/blob/master/zipline/data/adjustments.py
 
-    # Write dividends and splits_df
-    adjustment_dbpath = os.path.join(output_dir, "adjustments.sqlite")
-    sql_daily_bar_reader = SQLiteDailyBarReader(prices_dbpath)
-    asset_db_reader = SQLiteAssetFinder(asset_dbpath)
-    adjustment_writer = SQLiteDailyAdjustmentWriter(adjustment_dbpath, sql_daily_bar_reader, asset_db_reader, sessions)
+        # Write dividends and splits_df
+        adjustment_dbpath = os.path.join(output_dir, "adjustments.sqlite")
+        sql_daily_bar_reader = SQLiteDailyBarReader(prices_dbpath)
+        asset_db_reader = SQLiteAssetFinder(asset_dbpath)
+        adjustment_writer = SQLiteDailyAdjustmentWriter(adjustment_dbpath, sql_daily_bar_reader, asset_db_reader, sessions)
 
-    log.info("Start writing %d splits and %d dividends data..." % (len(splits_df), len(dividends_df)))
-    adjustment_writer.write(splits=splits_df, dividends=dividends_df)
+        log.info("Start writing %d splits and %d dividends data..." % (len(splits_df), len(dividends_df)))
+        adjustment_writer.write(splits=splits_df, dividends=dividends_df)
 
-    log.info("Adding macro data from %s ..." % (start_fetch_date))
-    macro_prices_df = create_macro_prices_df(start_fetch_date, calendar)
-    sql_daily_bar_writer.write(macro_prices_df)
+        log.info("Adding macro data from %s ..." % (start_fetch_date))
+        macro_prices_df = create_macro_prices_df(start_fetch_date, calendar)
+        sql_daily_bar_writer.write(macro_prices_df)
 
-    log.info("Start writing supplementary_mappings data...")
-    # EQUITY SUPPLEMENTARY MAPPINGS are used for company name, sector, industry and fundamentals financial data.
-    # They could be retrieved by AssetFinder.get_supplementary_field(sid, field_name, as_of_date)
-    log.info("Start creating company info dataframe...")
-    with closing(sqlite3.connect(asset_dbpath)) as conn, conn, closing(conn.cursor()) as cursor:
-        insert_asset_info(sharadar_metadata_df, cursor)
+        log.info("Start writing supplementary_mappings data...")
+        # EQUITY SUPPLEMENTARY MAPPINGS are used for company name, sector, industry and fundamentals financial data.
+        # They could be retrieved by AssetFinder.get_supplementary_field(sid, field_name, as_of_date)
+        log.info("Start creating company info dataframe...")
+        with closing(sqlite3.connect(asset_dbpath)) as conn, conn, closing(conn.cursor()) as cursor:
+            insert_asset_info(sharadar_metadata_df, cursor)
 
 
-    start_date_fundamentals = asset_db_reader.last_available_fundamentals_dt
-    log.info("Start creating Fundamentals dataframe...")
-    if must_fetch_entire_table(start_date_fundamentals):
-        log.info("Fetch entire table.")
-        sf1_df = fetch_entire_table(env["NASDAQ_API_KEY"], "SHARADAR/SF1", parse_dates=['datekey', 'reportperiod'])
-    else:
-        log.info("Start date: %s" % start_date_fundamentals)
-        sf1_df = fetch_sf1_table_date(env["NASDAQ_API_KEY"], start_date_fundamentals)
-    with closing(sqlite3.connect(asset_dbpath)) as conn, conn, closing(conn.cursor()) as cursor:
-        insert_fundamentals(sharadar_metadata_df, sf1_df, cursor, show_progress=True)
+        start_date_fundamentals = asset_db_reader.last_available_fundamentals_dt
+        log.info("Start creating Fundamentals dataframe...")
+        if must_fetch_entire_table(start_date_fundamentals):
+            log.info("Fetch entire table.")
+            sf1_df = fetch_entire_table(env["NASDAQ_API_KEY"], "SHARADAR/SF1", parse_dates=['datekey', 'reportperiod'])
+        else:
+            log.info("Start date: %s" % start_date_fundamentals)
+            sf1_df = fetch_sf1_table_date(env["NASDAQ_API_KEY"], start_date_fundamentals)
+        with closing(sqlite3.connect(asset_dbpath)) as conn, conn, closing(conn.cursor()) as cursor:
+            insert_fundamentals(sharadar_metadata_df, sf1_df, cursor, show_progress=True)
 
-    # start_date_metrics = asset_db_reader.last_available_daily_metrics_dt
-    # log.info("Start creating daily metrics dataframe...")
-    # if must_fetch_entire_table(start_date_metrics):
-    #     log.info("Fetch entire table.")
-    #     daily_df = fetch_entire_table(env["NASDAQ_API_KEY"], "SHARADAR/DAILY", parse_dates=['date'])
-    # else:
-    #     log.info("Start date: %s" % start_date_fundamentals)
-    #     daily_df = fetch_table_by_date(env["NASDAQ_API_KEY"], 'SHARADAR/DAILY', start_date_metrics)
-    # with closing(sqlite3.connect(asset_dbpath)) as conn, conn, closing(conn.cursor()) as cursor:
-    #     insert_daily_metrics(sharadar_metadata_df, daily_df, cursor, show_progress=True)
+        # start_date_metrics = asset_db_reader.last_available_daily_metrics_dt
+        # log.info("Start creating daily metrics dataframe...")
+        # if must_fetch_entire_table(start_date_metrics):
+        #     log.info("Fetch entire table.")
+        #     daily_df = fetch_entire_table(env["NASDAQ_API_KEY"], "SHARADAR/DAILY", parse_dates=['date'])
+        # else:
+        #     log.info("Start date: %s" % start_date_fundamentals)
+        #     daily_df = fetch_table_by_date(env["NASDAQ_API_KEY"], 'SHARADAR/DAILY', start_date_metrics)
+        # with closing(sqlite3.connect(asset_dbpath)) as conn, conn, closing(conn.cursor()) as cursor:
+        #     insert_daily_metrics(sharadar_metadata_df, daily_df, cursor, show_progress=True)
 
-    if universe:
-        from sharadar.pipeline.universes import update_universe, TRADABLE_STOCKS_US, base_universe, context
-        screen = base_universe(context())
-        update_universe(TRADABLE_STOCKS_US, screen)
+        if universe:
+            from sharadar.pipeline.universes import update_universe, TRADABLE_STOCKS_US, base_universe, context
+            screen = base_universe(context())
+            update_universe(TRADABLE_STOCKS_US, screen)
 
-    if sanity_check:
-        if asset_db_writer.check_sanity():
-            log.info("Sanity check successful!")
+        if sanity_check:
+            if asset_db_writer.check_sanity():
+                log.info("Sanity check successful!")
 
-    okay_path = os.path.join(output_dir, "ok")
-    Path(okay_path).touch()
-    log.info("Ingest finished!")
-    notify_telegram('zipline: sharadar ingest finished')
+        okay_path = os.path.join(output_dir, "ok")
+        Path(okay_path).touch()
+        log.info("Ingest finished!")
+        notify_telegram('zipline: sharadar ingest finished')
+
+    except Exception as e:
+        log.error('error: ' + str(e))
+        notify_telegram('zipline: sharadar ingest FAILED. Error: {}'.format(e))
 
 
 def create_metadata():
